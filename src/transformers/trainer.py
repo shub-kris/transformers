@@ -2047,7 +2047,7 @@ class Trainer:
                     self._maybe_log_save_evaluate(tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval)
                 else:
                     self.control = self.callback_handler.on_substep_end(args, self.state, self.control)
-
+                
                 if self.control.should_epoch_stop or self.control.should_training_stop:
                     # PyTorch/XLA relies on the data loader to insert the mark_step for
                     # each step. Since we are breaking the loop early, we need to manually
@@ -2405,6 +2405,7 @@ class Trainer:
     def _maybe_log_save_evaluate(self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval):
         if self.control.should_log and self.state.global_step > self._globalstep_last_logged:
             if is_torch_xla_available():
+                print(f"_maybe_log_save_evaluate being called at global step {self.state.global_step} and last_logged {self._globalstep_last_logged}")
                 xm.mark_step()
 
             logs: Dict[str, float] = {}
@@ -2439,6 +2440,9 @@ class Trainer:
                 self.lr_scheduler.step(metrics[metric_to_check])
 
         if self.control.should_save:
+            print(f"Inside saving being called at global step {self.state.global_step} and last_logged {self._globalstep_last_logged}")
+            if is_torch_xla_available():
+                xm.mark_step()
             self._save_checkpoint(model, trial, metrics=metrics)
             self.control = self.callback_handler.on_save(self.args, self.state, self.control)
 
@@ -3011,9 +3015,13 @@ class Trainer:
         output_dir = output_dir if output_dir is not None else self.args.output_dir
 
         logger.info(f"Saving model checkpoint to {output_dir}")
+        print(f"Saving model checkpoint to {output_dir}")
         model = self.model
+        # Compilation of the computational graph into an XLA HLO format for TPU execution
+        # Without it, the computations wouldn't be transferred and executed efficiently on the hardware
+        xm.mark_step()
         model.to("cpu")
-
+        print(f"Model transferred to CPU")
         if xm.is_master_ordinal():
             os.makedirs(output_dir, exist_ok=True)
             torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
@@ -3031,6 +3039,7 @@ class Trainer:
                     save_function=xm.save,
                     safe_serialization=self.args.save_safetensors,
                 )
+                print(f"Model successfully saved")
             else:
                 logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
                 state_dict = model.state_dict()
@@ -3048,7 +3057,6 @@ class Trainer:
         # We moved the model from TPU -> CPU for saving the weights.
         # Now we should move it back to subsequent compute still works.
         model.to(self.args.device)
-
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         # If we are executing this function, we are the process zero, so we don't check for that.
         output_dir = output_dir if output_dir is not None else self.args.output_dir
