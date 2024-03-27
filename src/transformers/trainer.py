@@ -62,7 +62,7 @@ from .hyperparameter_search import ALL_HYPERPARAMETER_SEARCH_BACKENDS, default_h
 from .integrations.deepspeed import deepspeed_init, deepspeed_load_checkpoint, is_deepspeed_available
 from .integrations.tpu import tpu_spmd_dataloader
 from .modelcard import TrainingSummary
-from .modeling_utils import PreTrainedModel, load_sharded_checkpoint, unwrap_model
+from .modeling_utils import PreTrainedModel, load_sharded_checkpoint, unwrap_model, unwrap_xla_fsdp2_model
 from .models.auto.modeling_auto import (
     MODEL_FOR_CAUSAL_LM_MAPPING_NAMES,
     MODEL_MAPPING_NAMES,
@@ -3202,11 +3202,12 @@ class Trainer:
         supported_classes = (PushToHubMixin,)
         xm.rendezvous("saving_checkpoint")
         if not isinstance(model, supported_classes):
-            if isinstance(unwrap_model(model), supported_classes):
-                unwrap_model(model).save_pretrained(
+            unwrap_func = unwrap_xla_fsdp2_model if self.is_fsdp_xla_v2_enabled else unwrap_model
+            if isinstance(unwrap_func(model), supported_classes):
+                unwrap_func(model).save_pretrained(
                     output_dir,
                     is_main_process=self.args.should_save,
-                    state_dict=model.state_dict(),
+                    state_dict=unwrap_func(model).state_dict(),
                     save_function=xm.save,
                     safe_serialization=self.args.save_safetensors,
                 )
